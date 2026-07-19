@@ -23,6 +23,7 @@
     --ink: #111111;
     --paper: #f5f2eb;
     --accent: #c8401a;
+    --gold: #c9a227;
     --mid: #6b6560;
     --bg: var(--paper);
     --fg: var(--ink);
@@ -53,7 +54,7 @@
 
   .wrap { max-width: 760px; margin: 0 auto; padding: 28px 18px 40px; }
 
-  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 28px; }
+  header { border-bottom: 3px solid var(--accent); padding-bottom: 18px; margin-bottom: 18px; }
   .eyebrow {
     font-family: 'DM Mono', monospace;
     font-size: 11px;
@@ -72,6 +73,21 @@
   h1 span { color: var(--accent); }
   .tagline { color: var(--mid); font-size: 14px; margin-top: 10px; max-width: 480px; }
 
+  nav.tabs {
+    display: flex; gap: 4px; margin-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  nav.tabs button {
+    font-family: 'DM Mono', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+    background: none; border: none; color: var(--mid); cursor: pointer;
+    padding: 10px 4px; margin-right: 22px; border-bottom: 2px solid transparent;
+  }
+  nav.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
+  nav.tabs button:hover { color: var(--fg); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
   h2.section-title {
     font-family: 'DM Mono', monospace;
     font-size: 11px;
@@ -81,6 +97,13 @@
     margin: 0 0 12px;
   }
   section { margin-bottom: 32px; }
+
+  .explainer {
+    background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--gold);
+    border-radius: 6px; padding: 14px 16px; font-size: 14px; line-height: 1.6; color: var(--fg);
+    margin-bottom: 24px;
+  }
+  .explainer b { color: var(--accent); }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .chip {
@@ -151,11 +174,27 @@
   .total-cell .n { font-family: 'Bebas Neue', sans-serif; font-size: 30px; line-height: 1; }
   .total-cell .p { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mid); margin-top: 4px; }
 
-  .queue-line { font-size: 13px; color: var(--mid); line-height: 1.6; }
+  .queue-line { font-size: 13px; color: var(--mid); line-height: 1.8; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
   .queue-line b { color: var(--accent); }
 
   .flash { color: var(--ok); font-size: 13px; margin-left: 10px; font-family: 'DM Mono', monospace; }
   .err { background: #f9d9d9; border: 1px solid #d88; color: #822; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 20px; }
+
+  .week-block {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .week-block .week-head {
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 0.02em;
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;
+  }
+  .week-block .week-date { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--mid); letter-spacing: 0.05em; }
+  .week-day-row { display: flex; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
+  .week-day-row:first-of-type { border-top: none; }
+  .week-day-name { font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); min-width: 70px; }
+  .week-day-info { flex: 1; }
+  .week-day-pay { color: var(--mid); font-family: 'DM Mono', monospace; font-size: 11px; }
+  .empty-note { color: var(--mid); font-size: 13px; font-style: italic; }
 
   footer { text-align: center; color: var(--mid); font-size: 11px; font-family: 'DM Mono', monospace; margin-top: 40px; letter-spacing: 0.05em; }
 </style>
@@ -171,74 +210,129 @@
 
   <div id="errBox"></div>
 
-  <section>
-    <h2 class="section-title">Roster</h2>
-    <div class="chips" id="rosterChips"></div>
-    <div class="row">
-      <input type="text" id="newPlayerInput" placeholder="Add a player…" />
-      <button class="primary" onclick="addPlayer()">Add</button>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="schedule" onclick="switchTab('schedule')">Schedule</button>
+    <button class="tab-btn" data-tab="passes" onclick="switchTab('passes')">Pass Rotation</button>
+    <button class="tab-btn" data-tab="history" onclick="switchTab('history')">History</button>
+  </nav>
+
+  <!-- SCHEDULE TAB -->
+  <div id="tab-schedule" class="tab-panel active">
+
+    <section>
+      <h2 class="section-title">Roster</h2>
+      <div class="chips" id="rosterChips"></div>
+      <div class="row">
+        <input type="text" id="newPlayerInput" placeholder="Add a player…" />
+        <button class="primary" onclick="addPlayer()">Add</button>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Days This Week</h2>
+      <div id="dayToggles"></div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Who's Free</h2>
+      <table id="availTable"></table>
+    </section>
+
+    <section>
+      <button class="primary" onclick="generateSchedule()">Generate This Week's Schedule</button>
+    </section>
+
+    <section id="resultsSection" style="display:none;">
+      <h2 class="section-title">This Week's Lineup</h2>
+      <div id="resultsCards"></div>
+      <button class="primary" onclick="confirmWeek()" style="margin-top:10px;">Confirm &amp; Save This Week</button>
+      <span class="flash" id="saveFlash" style="display:none;">Saved — queue and counts updated.</span>
+    </section>
+
+    <section>
+      <h2 class="section-title">Games Played This Season</h2>
+      <div class="totals-grid" id="gamesGrid"></div>
+    </section>
+
+    <button class="ghost" onclick="resetAll()">RESET ALL</button>
+  </div>
+
+  <!-- PASS ROTATION TAB -->
+  <div id="tab-passes" class="tab-panel">
+    <div class="explainer">
+      <b>How it works:</b> Every full 2-hour session costs 4 open-play passes — 2 people trade in 2 passes each to rent the court. Instead of tracking a running balance, the group uses a rotating queue of the whole roster. For each session, the next two people in line who are actually playing that day cover it, and the line picks up right after them for the next session. Players who play less often naturally get skipped less, so it self-balances over time without anyone doing math.
     </div>
-  </section>
 
-  <section>
-    <h2 class="section-title">Days This Week</h2>
-    <div id="dayToggles"></div>
-  </section>
+    <section>
+      <h2 class="section-title">Current Queue</h2>
+      <p class="queue-line" id="queueLine"></p>
+    </section>
 
-  <section>
-    <h2 class="section-title">Who's Free</h2>
-    <table id="availTable"></table>
-  </section>
+    <section>
+      <h2 class="section-title">Passes Paid This Season</h2>
+      <div class="totals-grid" id="passesGrid"></div>
+    </section>
+  </div>
 
-  <section>
-    <button class="primary" onclick="generateSchedule()">Generate This Week's Schedule</button>
-  </section>
-
-  <section id="resultsSection" style="display:none;">
-    <h2 class="section-title">This Week's Lineup</h2>
-    <div id="resultsCards"></div>
-    <button class="primary" onclick="confirmWeek()" style="margin-top:10px;">Confirm &amp; Save This Week</button>
-    <span class="flash" id="saveFlash" style="display:none;">Saved — queue and counts updated.</span>
-  </section>
-
-  <section>
-    <h2 class="section-title">Season Totals &amp; Queue</h2>
-    <div class="totals-grid" id="totalsGrid"></div>
-    <p class="queue-line" id="queueLine"></p>
-  </section>
-
-  <button class="ghost" onclick="resetAll()">RESET ALL</button>
+  <!-- HISTORY TAB -->
+  <div id="tab-history" class="tab-panel">
+    <section>
+      <h2 class="section-title">Previous Weeks</h2>
+      <div id="historyList"></div>
+    </section>
+  </div>
 
   <footer>TAKIM &middot; TRAIN AS A TEAM</footer>
 </div>
 
 <script>
-const STORAGE_KEY = 'takim_state_v1';
+const STORAGE_KEY = 'takim_state_v2';
 const ALL_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DEFAULT_ACTIVE_DAYS = ['Monday','Tuesday','Thursday','Friday'];
 const DEFAULT_PLAYERS = ['Aaron','Ife','Keith','Mick','TJ'];
 
 function defaultState() {
   const playCounts = {};
-  DEFAULT_PLAYERS.forEach(p => playCounts[p] = 0);
+  const passCounts = {};
+  DEFAULT_PLAYERS.forEach(p => { playCounts[p] = 0; passCounts[p] = 0; });
   return {
     players: DEFAULT_PLAYERS.slice(),
     activeDays: DEFAULT_ACTIVE_DAYS.slice(),
     availability: {},
     playCounts,
+    passCounts,
     queueOrder: DEFAULT_PLAYERS.slice(),
     queuePointer: 1,
-    weekNumber: 1
+    weekNumber: 1,
+    history: []
   };
 }
 
 let state = loadState();
 let preview = null;
+let activeTab = 'schedule';
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : defaultState();
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!parsed.passCounts) {
+        parsed.passCounts = {};
+        (parsed.players || []).forEach(p => parsed.passCounts[p] = 0);
+      }
+      if (!parsed.history) parsed.history = [];
+      return parsed;
+    }
+    const oldRaw = localStorage.getItem('takim_state_v1');
+    if (oldRaw) {
+      const old = JSON.parse(oldRaw);
+      old.passCounts = {};
+      (old.players || []).forEach(p => old.passCounts[p] = 0);
+      old.history = [];
+      return old;
+    }
+    return defaultState();
   } catch (e) {
     return defaultState();
   }
@@ -253,12 +347,19 @@ function saveState() {
 }
 
 function showError(msg) {
-  document.getElementById('errBox').innerHTML =
-    '<div class="err">' + msg + '</div>';
+  document.getElementById('errBox').innerHTML = '<div class="err">' + msg + '</div>';
 }
-
 function clearError() {
   document.getElementById('errBox').innerHTML = '';
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  if (tab === 'passes') renderPassesTab();
+  if (tab === 'history') renderHistoryTab();
 }
 
 function render() {
@@ -266,7 +367,9 @@ function render() {
   renderRoster();
   renderDayToggles();
   renderAvailTable();
-  renderTotals();
+  renderGamesGrid();
+  if (activeTab === 'passes') renderPassesTab();
+  if (activeTab === 'history') renderHistoryTab();
 }
 
 function renderRoster() {
@@ -304,15 +407,49 @@ function renderAvailTable() {
   el.innerHTML = html;
 }
 
-function renderTotals() {
-  const grid = document.getElementById('totalsGrid');
+function renderGamesGrid() {
+  const grid = document.getElementById('gamesGrid');
   grid.innerHTML = state.players.map(p =>
     '<div class="total-cell"><div class="n">' + (state.playCounts[p] || 0) +
     '</div><div class="p">' + escapeHtml(p) + '</div></div>'
   ).join('');
+}
+
+function renderPassesTab() {
+  const grid = document.getElementById('passesGrid');
+  grid.innerHTML = state.players.map(p =>
+    '<div class="total-cell"><div class="n">' + (state.passCounts[p] || 0) +
+    '</div><div class="p">' + escapeHtml(p) + '</div></div>'
+  ).join('');
 
   const q = state.queueOrder.map((p, i) => i === state.queuePointer ? '<b>' + escapeHtml(p) + '</b>' : escapeHtml(p)).join(' → ');
-  document.getElementById('queueLine').innerHTML = 'Pass queue order: ' + q + '<br>Bolded name is next up.';
+  document.getElementById('queueLine').innerHTML = 'Order: ' + q + '<br>Bolded name is next up to pay.';
+}
+
+function renderHistoryTab() {
+  const el = document.getElementById('historyList');
+  if (!state.history.length) {
+    el.innerHTML = '<p class="empty-note">No weeks confirmed yet. Once you confirm a week from the Schedule tab, it\'ll show up here.</p>';
+    return;
+  }
+  const weeks = state.history.slice().reverse();
+  el.innerHTML = weeks.map(w => {
+    const dateStr = new Date(w.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    let rows = w.days.map(d => {
+      let info;
+      if (d.status === 'full') {
+        info = escapeHtml(d.playing.join(', '));
+        if (d.benched && d.benched.length) info += ' <span style="color:var(--mid)">(sat: ' + escapeHtml(d.benched.join(', ')) + ')</span>';
+      } else {
+        info = (d.playing.length ? escapeHtml(d.playing.join(', ')) + ' + subs' : 'No session');
+      }
+      const pay = (d.status === 'full' && d.payers) ? ('Paid: ' + escapeHtml(d.payers.join(' & '))) : '';
+      return '<div class="week-day-row"><span class="week-day-name">' + d.day + '</span>' +
+        '<span class="week-day-info">' + info + '</span>' +
+        '<span class="week-day-pay">' + pay + '</span></div>';
+    }).join('');
+    return '<div class="week-block"><div class="week-head"><span>Week ' + w.week + '</span><span class="week-date">' + dateStr + '</span></div>' + rows + '</div>';
+  }).join('');
 }
 
 function toggleAvail(day, player) {
@@ -343,6 +480,7 @@ function addPlayer() {
   if (!name || state.players.includes(name)) return;
   state.players.push(name);
   state.playCounts[name] = 0;
+  state.passCounts[name] = 0;
   state.queueOrder.push(name);
   input.value = '';
   saveState();
@@ -356,6 +494,7 @@ function removePlayer(name) {
     if (state.availability[day]) delete state.availability[day][name];
   });
   delete state.playCounts[name];
+  delete state.passCounts[name];
   state.queueOrder = state.queueOrder.filter(p => p !== name);
   state.queuePointer = Math.min(state.queuePointer, Math.max(0, state.queueOrder.length - 1));
   saveState();
@@ -439,12 +578,31 @@ function renderResults() {
 
 function confirmWeek() {
   if (!preview) return;
+
+  const historyDays = [];
   state.activeDays.forEach(day => {
     const r = preview.results[day];
     if (r.status === 'full') {
       r.playing.forEach(p => { state.playCounts[p] = (state.playCounts[p] || 0) + 1; });
+      if (r.payers) {
+        r.payers.forEach(p => { state.passCounts[p] = (state.passCounts[p] || 0) + 2; });
+      }
     }
+    historyDays.push({
+      day,
+      status: r.status,
+      playing: r.playing.slice(),
+      benched: r.benched ? r.benched.slice() : [],
+      payers: r.payers ? r.payers.slice() : []
+    });
   });
+
+  state.history.push({
+    week: state.weekNumber,
+    date: new Date().toISOString(),
+    days: historyDays
+  });
+
   state.queuePointer = preview.finalPointer;
   state.weekNumber += 1;
   state.availability = {};
@@ -456,7 +614,7 @@ function confirmWeek() {
 }
 
 function resetAll() {
-  if (!confirm('Reset everything — roster, counts, queue, and this week\'s picks?')) return;
+  if (!confirm('Reset everything — roster, counts, queue, and history?')) return;
   state = defaultState();
   saveState();
   hideResults();
@@ -470,7 +628,6 @@ function escapeAttr(s) { return escapeHtml(s); }
 
 render();
 
-// PWA service worker registration (no-op if sw.js absent)
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
