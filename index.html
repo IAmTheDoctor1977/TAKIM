@@ -17,6 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5/build/index.umd.min.js"></script>
 
 <style>
   :root {
@@ -196,6 +197,21 @@
   .week-day-pay { color: var(--mid); font-family: 'DM Mono', monospace; font-size: 11px; }
   .empty-note { color: var(--mid); font-size: 13px; font-style: italic; }
 
+  button.export {
+    font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 13px;
+    background: var(--card); color: var(--fg); border: 1px solid var(--accent);
+    border-radius: 6px; padding: 8px 14px; cursor: pointer;
+  }
+  button.export:hover { background: var(--accent); color: #fff; }
+  .settings-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; align-items: flex-end; }
+  .settings-field label { display: block; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mid); margin-bottom: 5px; }
+  input[type=number] {
+    font-family: 'DM Mono', monospace; font-size: 14px;
+    background: var(--card); border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 9px 12px; width: 80px;
+  }
+  input[type=number]:focus { outline: none; border-color: var(--accent); }
+
   footer { text-align: center; color: var(--mid); font-size: 11px; font-family: 'DM Mono', monospace; margin-top: 40px; letter-spacing: 0.05em; }
 </style>
 </head>
@@ -218,6 +234,20 @@
 
   <!-- SCHEDULE TAB -->
   <div id="tab-schedule" class="tab-panel active">
+
+    <section>
+      <h2 class="section-title">Week Label &amp; Court Hours</h2>
+      <div class="settings-row">
+        <div class="settings-field">
+          <label for="dateRangeInput">Week date range (for doc)</label>
+          <input type="text" id="dateRangeInput" placeholder="e.g. July 20th to July 24th" style="max-width:260px;" oninput="updateDateRange(this.value)" />
+        </div>
+        <div class="settings-field">
+          <label for="startHourInput">Session start hour</label>
+          <input type="number" id="startHourInput" min="0" max="22" oninput="updateStartHour(this.value)" />
+        </div>
+      </div>
+    </section>
 
     <section>
       <h2 class="section-title">Roster</h2>
@@ -246,6 +276,7 @@
       <h2 class="section-title">This Week's Lineup</h2>
       <div id="resultsCards"></div>
       <button class="primary" onclick="confirmWeek()" style="margin-top:10px;">Confirm &amp; Save This Week</button>
+      <button class="export" onclick="exportCurrentWeekDoc()" style="margin-top:10px;">Export Word Doc</button>
       <span class="flash" id="saveFlash" style="display:none;">Saved — queue and counts updated.</span>
     </section>
 
@@ -304,7 +335,9 @@ function defaultState() {
     queueOrder: DEFAULT_PLAYERS.slice(),
     queuePointer: 1,
     weekNumber: 1,
-    history: []
+    history: [],
+    weekDateRange: '',
+    sessionStartHour: 8
   };
 }
 
@@ -322,6 +355,8 @@ function loadState() {
         (parsed.players || []).forEach(p => parsed.passCounts[p] = 0);
       }
       if (!parsed.history) parsed.history = [];
+      if (parsed.weekDateRange === undefined) parsed.weekDateRange = '';
+      if (parsed.sessionStartHour === undefined) parsed.sessionStartHour = 8;
       return parsed;
     }
     const oldRaw = localStorage.getItem('takim_state_v1');
@@ -330,6 +365,8 @@ function loadState() {
       old.passCounts = {};
       (old.players || []).forEach(p => old.passCounts[p] = 0);
       old.history = [];
+      old.weekDateRange = '';
+      old.sessionStartHour = 8;
       return old;
     }
     return defaultState();
@@ -364,12 +401,26 @@ function switchTab(tab) {
 
 function render() {
   document.getElementById('weekLabel').textContent = 'WEEK ' + state.weekNumber + ' · NON-VOLLEY ZONE SCHEDULING';
+  document.getElementById('dateRangeInput').value = state.weekDateRange || '';
+  document.getElementById('startHourInput').value = state.sessionStartHour;
   renderRoster();
   renderDayToggles();
   renderAvailTable();
   renderGamesGrid();
   if (activeTab === 'passes') renderPassesTab();
   if (activeTab === 'history') renderHistoryTab();
+}
+
+function updateDateRange(val) {
+  state.weekDateRange = val;
+  saveState();
+}
+
+function updateStartHour(val) {
+  const n = parseInt(val, 10);
+  state.sessionStartHour = isNaN(n) ? 8 : n;
+  saveState();
+  hideResults();
 }
 
 function renderRoster() {
@@ -448,7 +499,9 @@ function renderHistoryTab() {
         '<span class="week-day-info">' + info + '</span>' +
         '<span class="week-day-pay">' + pay + '</span></div>';
     }).join('');
-    return '<div class="week-block"><div class="week-head"><span>Week ' + w.week + '</span><span class="week-date">' + dateStr + '</span></div>' + rows + '</div>';
+    return '<div class="week-block"><div class="week-head"><span>Week ' + w.week + '</span><span class="week-date">' + dateStr + '</span></div>' + rows +
+      (w.docSnapshot ? '<button class="export" style="margin-top:12px;" onclick="exportHistoryDoc(' + w.week + ')">Export Word Doc</button>' : '') +
+      '</div>';
   }).join('');
 }
 
@@ -541,6 +594,8 @@ function generateSchedule() {
     }
     r.payers = payers;
     if (payers.length === 2) {
+      const h = state.sessionStartHour;
+      r.payerHours = [h + '-' + (h + 1), (h + 1) + '-' + (h + 2)];
       const lastIdx = order.indexOf(payers[1]);
       pointer = (lastIdx + 1) % order.length;
     }
@@ -569,15 +624,215 @@ function renderResults() {
       html += '<p class="day-sub">Sitting out: ' + escapeHtml(r.benched.join(', ')) + '</p>';
     }
     if (r.status === 'full' && r.payers) {
-      html += '<p class="day-payers">→ Passes: ' + escapeHtml(r.payers.join(' & ')) + ' (2 each)</p>';
+      const hourText = r.payerHours ? (' (' + r.payerHours[0] + ' / ' + r.payerHours[1] + ')') : '';
+      html += '<p class="day-payers">→ Passes: ' + escapeHtml(r.payers.join(' & ')) + hourText + '</p>';
     }
     html += '</div>';
     return html;
   }).join('');
 }
 
+function describeAvailability(p) {
+  const days = state.activeDays.filter(day => state.availability[day] && state.availability[day][p]);
+  if (days.length === state.activeDays.length && days.length > 0) {
+    return 'All ' + (days.length === 4 ? 'four' : days.length) + ' days';
+  }
+  if (days.length === 0) return 'Not available this week';
+  return days.join(', ');
+}
+
+function listJoin(arr) {
+  if (arr.length === 0) return 'no one';
+  if (arr.length === 1) return arr[0];
+  if (arr.length === 2) return arr[0] + ' and ' + arr[1];
+  return arr.slice(0, -1).join(', ') + ', and ' + arr[arr.length - 1];
+}
+
+function buildNotesParagraphs(results) {
+  const paras = [];
+  const shortDays = state.activeDays.filter(d => results[d].status === 'short');
+  if (shortDays.length) {
+    const sentences = shortDays.map(d => {
+      const r = results[d];
+      const avail = r.playing;
+      const total = state.players.length;
+      const list = listJoin(avail);
+      const isAre = r.needed > 1 ? 'are' : 'is';
+      return d + ' only had ' + list + ' available (' + avail.length + ' of ' + total + '), so ' + r.needed + ' sub' + (r.needed > 1 ? 's' : '') + ' ' + isAre + ' needed.';
+    });
+    paras.push(sentences.join(' '));
+  }
+
+  const fullDays = state.activeDays.filter(d => results[d].status === 'full');
+  if (fullDays.length) {
+    const sentences = fullDays.map(d => {
+      const r = results[d];
+      if (!r.benched || r.benched.length === 0) {
+        return d + ' is fixed at exactly 4 available (' + r.playing.join(', ') + ').';
+      }
+      return d + ' had all ' + (r.playing.length + r.benched.length) + ' available, so ' + r.benched.length + ' sat out: ' + r.benched.join(', ') + ' (most games played this season).';
+    });
+    paras.push(sentences.join(' '));
+  }
+
+  const sessionDays = state.activeDays.filter(d => results[d].status === 'full');
+  if (sessionDays.length) {
+    const totals = state.players.map(p => ({ p, n: sessionDays.filter(d => results[d].playing.includes(p)).length }))
+      .sort((a, b) => b.n - a.n || a.p.localeCompare(b.p));
+    const label = sessionDays.length === state.activeDays.length ? '' : (' (' + sessionDays.map(d => d.slice(0, 3)).join(' + ') + ' only)');
+    paras.push('Totals this week' + label + ': ' + totals.map(t => t.p + ' ' + t.n).join(', ') + '.');
+  }
+
+  return paras;
+}
+
+function buildDocData(results, finalPointer) {
+  const activeDays = state.activeDays;
+  const title = 'Pickleball Rotation Schedule' + (state.weekDateRange ? ' (' + state.weekDateRange + ')' : '');
+  const playersLine = state.players.join(', ');
+  const formatLine = '4 players per day, ' + activeDays.join(' / ') + '. Built one week at a time based on availability.';
+  const availabilityLines = state.players.map(p => p + ': ' + describeAvailability(p));
+
+  const scheduleCells = activeDays.map(day => {
+    const r = results[day];
+    if (r.status === 'full') return r.playing.join(', ');
+    if (!r.playing.length) return 'Subs (TBD)';
+    return r.playing.join(', ') + (r.needed === 1 ? ' + sub' : ' + subs');
+  });
+
+  const notesParagraphs = buildNotesParagraphs(results);
+
+  const passExplainer = 'Each 2-hour session costs 4 open play passes (2 people trade in 2 each). A rotating queue covers this fairly: ' +
+    state.queueOrder.join(', ') + ', then back to ' + state.queueOrder[0] + '. Each session, the next 2 people in line who are playing that day cover it, and the queue picks up right after them next time. Subs are outside the rotation.';
+
+  const payerLines = activeDays.filter(d => results[d].status === 'full' && results[d].payers).map(d => {
+    const r = results[d];
+    const hours = r.payerHours || ['', ''];
+    return d + ' — pays: ' + r.payers[0] + ' (books ' + hours[0] + '), ' + r.payers[1] + ' (books ' + hours[1] + ')';
+  });
+
+  const nextName = state.queueOrder[finalPointer];
+  const queueNextLine = 'Queue picks back up with ' + nextName + ' for the following week.';
+
+  return { title, playersLine, formatLine, availabilityLines, activeDays, scheduleCells, notesParagraphs, passExplainer, payerLines, queueNextLine };
+}
+
+function docxCellObj(text, opts) {
+  opts = opts || {};
+  return new docx.TableCell({
+    width: { size: opts.width || 1950, type: docx.WidthType.DXA },
+    shading: opts.header ? { type: docx.ShadingType.CLEAR, fill: '1F3864' } : undefined,
+    margins: { top: 100, bottom: 100, left: 120, right: 120 },
+    children: [new docx.Paragraph({ children: [new docx.TextRun({ text: text, bold: !!opts.header, color: opts.header ? 'FFFFFF' : undefined, size: 20 })] })],
+  });
+}
+
+function docxSectionHeader(text) {
+  return new docx.Paragraph({
+    children: [new docx.TextRun({ text: text, bold: true, size: 24, color: '1F3864' })],
+    spacing: { before: 200, after: 120 },
+  });
+}
+
+function docxBodyPara(text, after) {
+  return new docx.Paragraph({ children: [new docx.TextRun({ text: text })], spacing: { after: after || 100 } });
+}
+
+async function generateDocxBlob(data) {
+  const TABLE_WIDTH = 9360;
+  const n = data.activeDays.length;
+  const firstCol = 1560;
+  const restCol = Math.floor((TABLE_WIDTH - firstCol) / n);
+  const colWidths = [firstCol, ...Array(n).fill(restCol)];
+
+  const tableRows = [
+    new docx.TableRow({
+      tableHeader: true,
+      children: ['Week', ...data.activeDays].map((t, i) => docxCellObj(t, { header: true, width: colWidths[i] })),
+    }),
+    new docx.TableRow({
+      children: ['This Week', ...data.scheduleCells].map((t, i) => docxCellObj(t, { width: colWidths[i] })),
+    }),
+  ];
+
+  const doc = new docx.Document({
+    sections: [{
+      properties: { page: { size: { width: 12240, height: 15840 }, margins: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+      children: [
+        new docx.Paragraph({
+          alignment: docx.AlignmentType.CENTER,
+          children: [new docx.TextRun({ text: data.title, bold: true, size: 32, color: '1F3864' })],
+          border: { bottom: { color: 'C9A227', space: 4, style: docx.BorderStyle.SINGLE, size: 12 } },
+          spacing: { after: 300 },
+        }),
+        new docx.Paragraph({ children: [new docx.TextRun({ text: 'Players: ', bold: true }), new docx.TextRun({ text: data.playersLine })], spacing: { after: 80 } }),
+        new docx.Paragraph({ children: [new docx.TextRun({ text: 'Format: ', bold: true }), new docx.TextRun({ text: data.formatLine })], spacing: { after: 200 } }),
+
+        docxSectionHeader("This Week's Availability"),
+        ...data.availabilityLines.map(l => docxBodyPara(l, 40)),
+
+        docxSectionHeader("This Week's Schedule"),
+        new docx.Table({ width: { size: TABLE_WIDTH, type: docx.WidthType.DXA }, columnWidths: colWidths, rows: tableRows }),
+
+        docxSectionHeader('Notes'),
+        ...data.notesParagraphs.map(l => docxBodyPara(l, 120)),
+
+        docxSectionHeader('Court Pass Rotation'),
+        docxBodyPara(data.passExplainer, 120),
+        ...data.payerLines.map(l => docxBodyPara(l, 40)),
+        docxBodyPara(data.queueNextLine, 40),
+      ],
+    }],
+  });
+
+  return await docx.Packer.toBlob(doc);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+async function exportCurrentWeekDoc() {
+  if (!preview) {
+    showError("Generate this week's schedule first, then export.");
+    return;
+  }
+  clearError();
+  try {
+    const data = buildDocData(preview.results, preview.finalPointer);
+    const blob = await generateDocxBlob(data);
+    downloadBlob(blob, 'Pickleball_Schedule_Week' + state.weekNumber + '.docx');
+  } catch (e) {
+    showError('Could not build the Word doc: ' + e.message);
+  }
+}
+
+async function exportHistoryDoc(weekIndex) {
+  const w = state.history.find(h => h.week === weekIndex);
+  if (!w || !w.docSnapshot) {
+    showError('No saved doc data for that week.');
+    return;
+  }
+  clearError();
+  try {
+    const blob = await generateDocxBlob(w.docSnapshot);
+    downloadBlob(blob, 'Pickleball_Schedule_Week' + weekIndex + '.docx');
+  } catch (e) {
+    showError('Could not build the Word doc: ' + e.message);
+  }
+}
+
 function confirmWeek() {
   if (!preview) return;
+
+  const docSnapshot = buildDocData(preview.results, preview.finalPointer);
 
   const historyDays = [];
   state.activeDays.forEach(day => {
@@ -600,7 +855,8 @@ function confirmWeek() {
   state.history.push({
     week: state.weekNumber,
     date: new Date().toISOString(),
-    days: historyDays
+    days: historyDays,
+    docSnapshot: docSnapshot
   });
 
   state.queuePointer = preview.finalPointer;
