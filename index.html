@@ -98,6 +98,7 @@
     margin: 0 0 12px;
   }
   section { margin-bottom: 32px; }
+  section p { font-size: 14px; line-height: 1.6; margin: 0; }
 
   .explainer {
     background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--gold);
@@ -229,6 +230,7 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="schedule" onclick="switchTab('schedule')">Schedule</button>
     <button class="tab-btn" data-tab="passes" onclick="switchTab('passes')">Pass Rotation</button>
+    <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">Court Pass Rotation Rules</button>
     <button class="tab-btn" data-tab="history" onclick="switchTab('history')">History</button>
   </nav>
 
@@ -305,6 +307,38 @@
     </section>
   </div>
 
+  <!-- RULES TAB -->
+  <div id="tab-rules" class="tab-panel">
+    <div class="explainer">
+      Every 2-hour court session costs 4 open-play passes. Two people trade in 2 passes each to book it. These are the rules for who pays.
+    </div>
+
+    <section>
+      <h2 class="section-title">Rule 1 — Only two players on</h2>
+      <p>If a day only has 2 players available, there's no decision to make — those two simply pay for the session themselves. This doesn't touch the rotation line at all; it's not their "turn," so it doesn't cost them their place.</p>
+    </section>
+
+    <section>
+      <h2 class="section-title">Rule 2 — Three or four players on</h2>
+      <p>With 3 or 4 players, the rotation kicks in. There's a single line of the whole roster. Whoever's at the front pays, along with the next person after them in line — but only if they're actually playing that day.</p>
+    </section>
+
+    <section>
+      <h2 class="section-title">Rule 3 — Skipped players keep their spot</h2>
+      <p>If the person at the front of the line isn't playing that day, they're skipped for this session — but they don't lose their place. They stay exactly where they are in line, still first up, until a day comes along where they're actually playing.</p>
+    </section>
+
+    <section>
+      <h2 class="section-title">Rule 4 — Paying sends you to the back</h2>
+      <p>Whoever does pay moves to the very back of the line — the longest possible wait before they're picked again. Combined with Rule 3, this guarantees no one pays twice before everyone else already ahead of them in line has had a turn.</p>
+    </section>
+
+    <section>
+      <h2 class="section-title">Why it works this way</h2>
+      <p>A simple "next two people" rotation breaks down as soon as someone's unavailable — if you just skip them and move on, they can end up back at the front again almost immediately, while whoever paid barely gets a break. Treating it as a real line — skipped players frozen in place, payers sent to the very back — means the wait before paying again is always as long as possible, regardless of who happens to be free on a given day.</p>
+    </section>
+  </div>
+
   <!-- HISTORY TAB -->
   <div id="tab-history" class="tab-panel">
     <section>
@@ -333,7 +367,6 @@ function defaultState() {
     playCounts,
     passCounts,
     queueOrder: DEFAULT_PLAYERS.slice(),
-    queuePointer: 1,
     weekNumber: 1,
     history: [],
     weekDateRange: '',
@@ -357,6 +390,11 @@ function loadState() {
       if (!parsed.history) parsed.history = [];
       if (parsed.weekDateRange === undefined) parsed.weekDateRange = '';
       if (parsed.sessionStartHour === undefined) parsed.sessionStartHour = 8;
+      if (typeof parsed.queuePointer === 'number' && parsed.queueOrder) {
+        const p = parsed.queuePointer % parsed.queueOrder.length;
+        parsed.queueOrder = parsed.queueOrder.slice(p).concat(parsed.queueOrder.slice(0, p));
+        delete parsed.queuePointer;
+      }
       return parsed;
     }
     const oldRaw = localStorage.getItem('takim_state_v1');
@@ -367,6 +405,11 @@ function loadState() {
       old.history = [];
       old.weekDateRange = '';
       old.sessionStartHour = 8;
+      if (typeof old.queuePointer === 'number' && old.queueOrder) {
+        const p = old.queuePointer % old.queueOrder.length;
+        old.queueOrder = old.queueOrder.slice(p).concat(old.queueOrder.slice(0, p));
+        delete old.queuePointer;
+      }
       return old;
     }
     return defaultState();
@@ -473,8 +516,8 @@ function renderPassesTab() {
     '</div><div class="p">' + escapeHtml(p) + '</div></div>'
   ).join('');
 
-  const q = state.queueOrder.map((p, i) => i === state.queuePointer ? '<b>' + escapeHtml(p) + '</b>' : escapeHtml(p)).join(' → ');
-  document.getElementById('queueLine').innerHTML = 'Order: ' + q + '<br>Bolded name is next up to pay.';
+  const q = state.queueOrder.map((p, i) => i === 0 ? '<b>' + escapeHtml(p) + '</b>' : escapeHtml(p)).join(' → ');
+  document.getElementById('queueLine').innerHTML = 'Line (front to back): ' + q + '<br>Bolded name is next up to pay.';
 }
 
 function renderHistoryTab() {
@@ -549,7 +592,6 @@ function removePlayer(name) {
   delete state.playCounts[name];
   delete state.passCounts[name];
   state.queueOrder = state.queueOrder.filter(p => p !== name);
-  state.queuePointer = Math.min(state.queuePointer, Math.max(0, state.queueOrder.length - 1));
   saveState();
   hideResults();
   render();
@@ -580,28 +622,42 @@ function generateSchedule() {
     }
   });
 
-  let pointer = state.queuePointer;
-  const order = state.queueOrder.slice();
+  let queue = state.queueOrder.slice();
   state.activeDays.forEach(day => {
     const r = results[day];
-    if (r.status !== 'full') return;
-    const payers = [];
-    let steps = 0, idx = pointer;
-    while (payers.length < 2 && steps < order.length * 2) {
-      const candidate = order[idx % order.length];
-      if (r.playing.includes(candidate) && !payers.includes(candidate)) payers.push(candidate);
-      idx++; steps++;
+    const playing = r.playing;
+
+    if (playing.length === 2) {
+      // Only two people on — they just pay, no rotation involved.
+      r.payers = playing.slice();
+      r.queueMutated = false;
+    } else if (playing.length >= 3) {
+      // Walk the line front-to-back; anyone not playing today is skipped
+      // in place (stays exactly where they are for next time).
+      const payers = [];
+      for (const name of queue) {
+        if (playing.includes(name) && !payers.includes(name)) {
+          payers.push(name);
+          if (payers.length === 2) break;
+        }
+      }
+      if (payers.length === 2) {
+        r.payers = payers;
+        r.queueMutated = true;
+        // Payers move to the very back of the line; everyone else
+        // (including anyone skipped) keeps their relative position.
+        queue = queue.filter(n => !payers.includes(n)).concat(payers);
+      }
     }
-    r.payers = payers;
-    if (payers.length === 2) {
+    // playing.length < 2: not enough people yet to assign payers (needs subs first).
+
+    if (r.payers && r.payers.length === 2) {
       const h = state.sessionStartHour;
       r.payerHours = [h + '-' + (h + 1), (h + 1) + '-' + (h + 2)];
-      const lastIdx = order.indexOf(payers[1]);
-      pointer = (lastIdx + 1) % order.length;
     }
   });
 
-  preview = { results, finalPointer: pointer };
+  preview = { results, finalQueueOrder: queue };
   renderResults();
 }
 
@@ -623,7 +679,7 @@ function renderResults() {
     if (r.benched && r.benched.length) {
       html += '<p class="day-sub">Sitting out: ' + escapeHtml(r.benched.join(', ')) + '</p>';
     }
-    if (r.status === 'full' && r.payers) {
+    if (r.payers && r.payers.length === 2) {
       const hourText = r.payerHours ? (' (' + r.payerHours[0] + ' / ' + r.payerHours[1] + ')') : '';
       html += '<p class="day-payers">→ Passes: ' + escapeHtml(r.payers.join(' & ')) + hourText + '</p>';
     }
@@ -686,7 +742,7 @@ function buildNotesParagraphs(results) {
   return paras;
 }
 
-function buildDocData(results, finalPointer) {
+function buildDocData(results, finalQueueOrder) {
   const activeDays = state.activeDays;
   const title = 'Pickleball Rotation Schedule' + (state.weekDateRange ? ' (' + state.weekDateRange + ')' : '');
   const playersLine = state.players.join(', ');
@@ -702,17 +758,17 @@ function buildDocData(results, finalPointer) {
 
   const notesParagraphs = buildNotesParagraphs(results);
 
-  const passExplainer = 'Each 2-hour session costs 4 open play passes (2 people trade in 2 each). A rotating queue covers this fairly: ' +
-    state.queueOrder.join(', ') + ', then back to ' + state.queueOrder[0] + '. Each session, the next 2 people in line who are playing that day cover it, and the queue picks up right after them next time. Subs are outside the rotation.';
+  const passExplainer = 'Each 2-hour session costs 4 open play passes. If only 2 players are on for a day, those two simply cover it. Otherwise, whoever is next in line pays — anyone in line who isn\'t playing that day is skipped but keeps their spot, and whoever does pay moves to the back of the line, so no one pays twice before everyone else has had a turn. Current line, front to back: ' +
+    state.queueOrder.join(', ') + '.';
 
-  const payerLines = activeDays.filter(d => results[d].status === 'full' && results[d].payers).map(d => {
+  const payerLines = activeDays.filter(d => results[d].payers && results[d].payers.length === 2).map(d => {
     const r = results[d];
     const hours = r.payerHours || ['', ''];
     return d + ' — pays: ' + r.payers[0] + ' (books ' + hours[0] + '), ' + r.payers[1] + ' (books ' + hours[1] + ')';
   });
 
-  const nextName = state.queueOrder[finalPointer];
-  const queueNextLine = 'Queue picks back up with ' + nextName + ' for the following week.';
+  const nextName = finalQueueOrder[0];
+  const queueNextLine = 'Line picks back up with ' + nextName + ' at the front for the following week.';
 
   return { title, playersLine, formatLine, availabilityLines, activeDays, scheduleCells, notesParagraphs, passExplainer, payerLines, queueNextLine };
 }
@@ -806,7 +862,7 @@ async function exportCurrentWeekDoc() {
   }
   clearError();
   try {
-    const data = buildDocData(preview.results, preview.finalPointer);
+    const data = buildDocData(preview.results, preview.finalQueueOrder);
     const blob = await generateDocxBlob(data);
     downloadBlob(blob, 'Pickleball_Schedule_Week' + state.weekNumber + '.docx');
   } catch (e) {
@@ -832,16 +888,16 @@ async function exportHistoryDoc(weekIndex) {
 function confirmWeek() {
   if (!preview) return;
 
-  const docSnapshot = buildDocData(preview.results, preview.finalPointer);
+  const docSnapshot = buildDocData(preview.results, preview.finalQueueOrder);
 
   const historyDays = [];
   state.activeDays.forEach(day => {
     const r = preview.results[day];
     if (r.status === 'full') {
       r.playing.forEach(p => { state.playCounts[p] = (state.playCounts[p] || 0) + 1; });
-      if (r.payers) {
-        r.payers.forEach(p => { state.passCounts[p] = (state.passCounts[p] || 0) + 2; });
-      }
+    }
+    if (r.payers && r.payers.length === 2) {
+      r.payers.forEach(p => { state.passCounts[p] = (state.passCounts[p] || 0) + 2; });
     }
     historyDays.push({
       day,
@@ -859,7 +915,7 @@ function confirmWeek() {
     docSnapshot: docSnapshot
   });
 
-  state.queuePointer = preview.finalPointer;
+  state.queueOrder = preview.finalQueueOrder;
   state.weekNumber += 1;
   state.availability = {};
   saveState();
