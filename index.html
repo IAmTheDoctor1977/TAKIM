@@ -343,6 +343,7 @@
   <div id="tab-history" class="tab-panel">
     <section>
       <h2 class="section-title">Previous Weeks</h2>
+      <div id="historyActions" style="margin-bottom:16px;"></div>
       <div id="historyList"></div>
     </section>
   </div>
@@ -521,6 +522,11 @@ function renderPassesTab() {
 }
 
 function renderHistoryTab() {
+  const actionsEl = document.getElementById('historyActions');
+  actionsEl.innerHTML = state.history.length
+    ? '<button class="export" onclick="exportSeasonReport()">Export Season Report</button>'
+    : '';
+
   const el = document.getElementById('historyList');
   if (!state.history.length) {
     el.innerHTML = '<p class="empty-note">No weeks confirmed yet. Once you confirm a week from the Schedule tab, it\'ll show up here.</p>';
@@ -885,6 +891,133 @@ async function exportHistoryDoc(weekIndex) {
   }
 }
 
+function buildSeasonReportData() {
+  const weeks = state.history.slice(); // chronological, oldest first
+  const allPlayersEver = Array.from(new Set(
+    weeks.reduce((acc, w) => acc.concat(Object.keys(w.cumulativePlayCounts || {})), state.players.slice())
+  ));
+
+  const weekRows = weeks.map(w => {
+    const dateStr = new Date(w.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const label = 'Week ' + w.week + (w.weekDateRange ? ' (' + w.weekDateRange + ')' : '') + ' — confirmed ' + dateStr;
+    const sessionRows = w.days
+      .filter(d => d.playing && d.playing.length)
+      .map(d => {
+        const playedStr = d.playing.join(', ') + (d.status === 'short' ? (d.needed === 1 ? ' + sub' : ' + subs') : '');
+        const paidStr = (d.payers && d.payers.length === 2)
+          ? d.payers[0] + (d.payerHours ? ' (' + d.payerHours[0] + ')' : '') + ', ' + d.payers[1] + (d.payerHours ? ' (' + d.payerHours[1] + ')' : '')
+          : '—';
+        return { day: d.day, played: playedStr, paid: paidStr };
+      });
+    return { label, dateStr, sessionRows, cumulativePlayCounts: w.cumulativePlayCounts || {}, cumulativePassCounts: w.cumulativePassCounts || {} };
+  });
+
+  const finalTotals = allPlayersEver.map(p => ({
+    player: p,
+    played: state.playCounts[p] || 0,
+    paid: state.passCounts[p] || 0
+  })).sort((a, b) => b.played - a.played || a.player.localeCompare(b.player));
+
+  return {
+    generatedOn: new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }),
+    allPlayersEver,
+    weekRows,
+    finalTotals
+  };
+}
+
+function docxTallyTable(weekRows, players, field, label) {
+  const colW = Math.floor(8200 / (players.length + 1));
+  const headerRow = new docx.TableRow({
+    tableHeader: true,
+    children: [docxCellObj('Week', { header: true, width: 1600 })].concat(
+      players.map(p => docxCellObj(p, { header: true, width: colW }))
+    ),
+  });
+  const rows = weekRows.map(w => new docx.TableRow({
+    children: [docxCellObj(w.label.split(' — ')[0], { width: 1600 })].concat(
+      players.map(p => docxCellObj(String(w[field][p] !== undefined ? w[field][p] : 0), { width: colW }))
+    ),
+  }));
+  return new docx.Table({ width: { size: 9800, type: docx.WidthType.DXA }, rows: [headerRow, ...rows] });
+}
+
+async function generateSeasonReportDocx(data) {
+  const children = [
+    new docx.Paragraph({
+      alignment: docx.AlignmentType.CENTER,
+      children: [new docx.TextRun({ text: 'TAKIM Season Report', bold: true, size: 32, color: '1F3864' })],
+      border: { bottom: { color: 'C9A227', space: 4, style: docx.BorderStyle.SINGLE, size: 12 } },
+      spacing: { after: 120 },
+    }),
+    new docx.Paragraph({
+      alignment: docx.AlignmentType.CENTER,
+      children: [new docx.TextRun({ text: 'Generated ' + data.generatedOn, size: 18, color: '6B6560' })],
+      spacing: { after: 300 },
+    }),
+    docxSectionHeader('Weekly Log'),
+  ];
+
+  data.weekRows.forEach(w => {
+    children.push(new docx.Paragraph({
+      children: [new docx.TextRun({ text: w.label, bold: true, size: 20 })],
+      spacing: { before: 160, after: 80 },
+    }));
+    if (w.sessionRows.length) {
+      const headerRow = new docx.TableRow({
+        tableHeader: true,
+        children: ['Day', 'Played', 'Paid'].map((t, i) => docxCellObj(t, { header: true, width: i === 0 ? 1600 : 4100 })),
+      });
+      const rows = w.sessionRows.map(s => new docx.TableRow({
+        children: [docxCellObj(s.day, { width: 1600 }), docxCellObj(s.played, { width: 4100 }), docxCellObj(s.paid, { width: 4100 })],
+      }));
+      children.push(new docx.Table({ width: { size: 9800, type: docx.WidthType.DXA }, rows: [headerRow, ...rows] }));
+    } else {
+      children.push(docxBodyPara('No sessions recorded this week.', 60));
+    }
+  });
+
+  children.push(docxSectionHeader('Running Tally — Games Played'));
+  children.push(docxTallyTable(data.weekRows, data.allPlayersEver, 'cumulativePlayCounts'));
+
+  children.push(docxSectionHeader('Running Tally — Passes Paid'));
+  children.push(docxTallyTable(data.weekRows, data.allPlayersEver, 'cumulativePassCounts'));
+
+  children.push(docxSectionHeader('Season Totals'));
+  const totalsHeader = new docx.TableRow({
+    tableHeader: true,
+    children: ['Player', 'Games Played', 'Passes Paid'].map((t, i) => docxCellObj(t, { header: true, width: i === 0 ? 3200 : 3300 })),
+  });
+  const totalsRows = data.finalTotals.map(t => new docx.TableRow({
+    children: [docxCellObj(t.player, { width: 3200 }), docxCellObj(String(t.played), { width: 3300 }), docxCellObj(String(t.paid), { width: 3300 })],
+  }));
+  children.push(new docx.Table({ width: { size: 9800, type: docx.WidthType.DXA }, rows: [totalsHeader, ...totalsRows] }));
+
+  const doc = new docx.Document({
+    sections: [{
+      properties: { page: { size: { width: 12240, height: 15840 }, margins: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+      children,
+    }],
+  });
+
+  return await docx.Packer.toBlob(doc);
+}
+
+async function exportSeasonReport() {
+  if (!state.history.length) {
+    showError('No confirmed weeks yet — nothing to report on.');
+    return;
+  }
+  clearError();
+  try {
+    const data = buildSeasonReportData();
+    const blob = await generateSeasonReportDocx(data);
+    downloadBlob(blob, 'TAKIM_Season_Report.docx');
+  } catch (e) {
+    showError('Could not build the season report: ' + e.message);
+  }
+}
+
 function confirmWeek() {
   if (!preview) return;
 
@@ -904,15 +1037,20 @@ function confirmWeek() {
       status: r.status,
       playing: r.playing.slice(),
       benched: r.benched ? r.benched.slice() : [],
-      payers: r.payers ? r.payers.slice() : []
+      payers: r.payers ? r.payers.slice() : [],
+      payerHours: r.payerHours ? r.payerHours.slice() : null,
+      needed: r.needed || null
     });
   });
 
   state.history.push({
     week: state.weekNumber,
     date: new Date().toISOString(),
+    weekDateRange: state.weekDateRange,
     days: historyDays,
-    docSnapshot: docSnapshot
+    docSnapshot: docSnapshot,
+    cumulativePlayCounts: Object.assign({}, state.playCounts),
+    cumulativePassCounts: Object.assign({}, state.passCounts)
   });
 
   state.queueOrder = preview.finalQueueOrder;
