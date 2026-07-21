@@ -220,7 +220,7 @@
 <div class="wrap">
 
   <header>
-    <p class="eyebrow" id="weekLabel">WEEK 1 · NON-VOLLEY ZONE SCHEDULING</p>
+    <p class="eyebrow" id="weekLabel">WEEK 1 · NON-VOLLEY ZONE SCHEDULING · v7</p>
     <h1>TAK<span>I</span>M</h1>
     <p class="tagline">Set who's free this week, generate the day-by-day lineup, and see who owes court passes — 4 per session, split 2 and 2, on a rotating queue.</p>
   </header>
@@ -353,6 +353,7 @@
 </div>
 
 <script>
+const APP_VERSION = 'v7';
 const STORAGE_KEY = 'takim_state_v2';
 const ALL_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const DEFAULT_ACTIVE_DAYS = ['Monday','Tuesday','Thursday','Friday'];
@@ -445,7 +446,7 @@ function switchTab(tab) {
 }
 
 function render() {
-  document.getElementById('weekLabel').textContent = 'WEEK ' + state.weekNumber + ' · NON-VOLLEY ZONE SCHEDULING';
+  document.getElementById('weekLabel').textContent = 'WEEK ' + state.weekNumber + ' · NON-VOLLEY ZONE SCHEDULING · ' + APP_VERSION;
   document.getElementById('dateRangeInput').value = state.weekDateRange || '';
   document.getElementById('startHourInput').value = state.sessionStartHour;
   renderRoster();
