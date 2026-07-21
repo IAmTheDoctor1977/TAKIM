@@ -279,6 +279,7 @@
       <div id="resultsCards"></div>
       <button class="primary" onclick="confirmWeek()" style="margin-top:10px;">Confirm &amp; Save This Week</button>
       <button class="export" onclick="exportCurrentWeekDoc()" style="margin-top:10px;">Export Word Doc</button>
+      <button class="export" onclick="exportCurrentSimpleReport()" style="margin-top:10px;">Export Simple Report</button>
       <span class="flash" id="saveFlash" style="display:none;">Saved — queue and counts updated.</span>
     </section>
 
@@ -550,6 +551,7 @@ function renderHistoryTab() {
     }).join('');
     return '<div class="week-block"><div class="week-head"><span>Week ' + w.week + '</span><span class="week-date">' + dateStr + '</span></div>' + rows +
       (w.docSnapshot ? '<button class="export" style="margin-top:12px;" onclick="exportHistoryDoc(' + w.week + ')">Export Word Doc</button>' : '') +
+      ' <button class="export" style="margin-top:12px;" onclick="exportHistorySimpleReport(' + w.week + ')">Export Simple Report</button>' +
       '</div>';
   }).join('');
 }
@@ -888,6 +890,134 @@ async function exportHistoryDoc(weekIndex) {
     downloadBlob(blob, 'Pickleball_Schedule_Week' + weekIndex + '.docx');
   } catch (e) {
     showError('Could not build the Word doc: ' + e.message);
+  }
+}
+
+function buildSimpleReportData(dayEntries, dateRangeLabel) {
+  const days = dayEntries.map(d => {
+    let playingLine, payingLine;
+
+    if (!d.playing || !d.playing.length) {
+      playingLine = 'No one yet';
+    } else if (d.status === 'short' && d.needed) {
+      playingLine = d.playing.join(', ') + '  (need ' + d.needed + ' more)';
+    } else {
+      playingLine = d.playing.join(', ');
+    }
+
+    if (d.payers && d.payers.length === 2) {
+      payingLine = d.payers[0] + ' & ' + d.payers[1];
+    } else {
+      payingLine = 'TBD';
+    }
+
+    return { day: d.day, playingLine, payingLine };
+  });
+
+  return {
+    title: 'This Week' + (dateRangeLabel ? ' — ' + dateRangeLabel : ''),
+    days
+  };
+}
+
+async function generateSimpleReportDocx(data) {
+  const children = [
+    new docx.Paragraph({
+      alignment: docx.AlignmentType.CENTER,
+      children: [new docx.TextRun({ text: data.title, bold: true, size: 44, color: '1F3864' })],
+      border: { bottom: { color: 'C9A227', space: 6, style: docx.BorderStyle.SINGLE, size: 16 } },
+      spacing: { after: 500 },
+    }),
+  ];
+
+  data.days.forEach((d, i) => {
+    children.push(new docx.Paragraph({
+      children: [new docx.TextRun({ text: d.day.toUpperCase(), bold: true, size: 36, color: '1F3864' })],
+      spacing: { before: i === 0 ? 0 : 400, after: 150 },
+    }));
+
+    const labelWidth = 2600;
+    const valueWidth = 7200;
+
+    const playingRow = new docx.TableRow({
+      children: [
+        new docx.TableCell({
+          width: { size: labelWidth, type: docx.WidthType.DXA },
+          shading: { type: docx.ShadingType.CLEAR, fill: 'EDEAE0' },
+          margins: { top: 160, bottom: 160, left: 160, right: 160 },
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: 'PLAYING', bold: true, size: 26, color: '111111' })] })],
+        }),
+        new docx.TableCell({
+          width: { size: valueWidth, type: docx.WidthType.DXA },
+          margins: { top: 160, bottom: 160, left: 160, right: 160 },
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: d.playingLine, bold: true, size: 30 })] })],
+        }),
+      ],
+    });
+
+    const payingRow = new docx.TableRow({
+      children: [
+        new docx.TableCell({
+          width: { size: labelWidth, type: docx.WidthType.DXA },
+          shading: { type: docx.ShadingType.CLEAR, fill: 'C9A227' },
+          margins: { top: 160, bottom: 160, left: 160, right: 160 },
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: '$ PAYING', bold: true, size: 26, color: '111111' })] })],
+        }),
+        new docx.TableCell({
+          width: { size: valueWidth, type: docx.WidthType.DXA },
+          shading: { type: docx.ShadingType.CLEAR, fill: 'FBF6E3' },
+          margins: { top: 160, bottom: 160, left: 160, right: 160 },
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: d.payingLine, bold: true, size: 30, color: '8A5A00' })] })],
+        }),
+      ],
+    });
+
+    children.push(new docx.Table({
+      width: { size: labelWidth + valueWidth, type: docx.WidthType.DXA },
+      columnWidths: [labelWidth, valueWidth],
+      rows: [playingRow, payingRow],
+    }));
+  });
+
+  const doc = new docx.Document({
+    sections: [{
+      properties: { page: { size: { width: 12240, height: 15840 }, margins: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+      children,
+    }],
+  });
+
+  return await docx.Packer.toBlob(doc);
+}
+
+async function exportCurrentSimpleReport() {
+  if (!preview) {
+    showError("Generate this week's schedule first, then export.");
+    return;
+  }
+  clearError();
+  try {
+    const dayEntries = state.activeDays.map(d => Object.assign({ day: d }, preview.results[d]));
+    const data = buildSimpleReportData(dayEntries, state.weekDateRange);
+    const blob = await generateSimpleReportDocx(data);
+    downloadBlob(blob, 'Simple_Schedule_Week' + state.weekNumber + '.docx');
+  } catch (e) {
+    showError('Could not build the simple report: ' + e.message);
+  }
+}
+
+async function exportHistorySimpleReport(weekIndex) {
+  const w = state.history.find(h => h.week === weekIndex);
+  if (!w) {
+    showError('No saved data for that week.');
+    return;
+  }
+  clearError();
+  try {
+    const data = buildSimpleReportData(w.days, w.weekDateRange);
+    const blob = await generateSimpleReportDocx(data);
+    downloadBlob(blob, 'Simple_Schedule_Week' + weekIndex + '.docx');
+  } catch (e) {
+    showError('Could not build the simple report: ' + e.message);
   }
 }
 
