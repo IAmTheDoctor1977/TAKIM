@@ -893,9 +893,9 @@ async function exportHistoryDoc(weekIndex) {
   }
 }
 
-function buildSimpleReportData(dayEntries, dateRangeLabel) {
+function buildSimpleReportData(dayEntries, dateRangeLabel, notesParagraphs, nextUpName) {
   const days = dayEntries.map(d => {
-    let playingLine, payingLine;
+    let playingLine, payingLine, bookLine;
 
     if (!d.playing || !d.playing.length) {
       playingLine = 'No one yet';
@@ -907,16 +907,34 @@ function buildSimpleReportData(dayEntries, dateRangeLabel) {
 
     if (d.payers && d.payers.length === 2) {
       payingLine = d.payers[0] + ' & ' + d.payers[1];
+      bookLine = d.payerHours
+        ? d.payers[0] + ' ' + d.payerHours[0] + ', ' + d.payers[1] + ' ' + d.payerHours[1]
+        : 'TBD';
     } else {
       payingLine = 'TBD';
+      bookLine = 'TBD';
     }
 
-    return { day: d.day, playingLine, payingLine };
+    return { day: d.day, playingLine, payingLine, bookLine, playingCount: (d.playing || []).length, payers: d.payers || [] };
   });
+
+  const passRecapLines = days
+    .filter(d => d.payers.length === 2)
+    .map(d => {
+      if (d.playingCount === 2) {
+        return d.day + ' — ' + d.payers[0] + ' & ' + d.payers[1] + ' paid (just the two of them, no rotation needed).';
+      }
+      return d.day + ' — ' + d.payers[0] + ' & ' + d.payers[1] + ' paid.';
+    });
+
+  const queueNextLine = nextUpName ? ('Queue picks back up with ' + nextUpName + ' at the front next week.') : '';
 
   return {
     title: 'This Week' + (dateRangeLabel ? ' — ' + dateRangeLabel : ''),
-    days
+    days,
+    notesParagraphs: notesParagraphs || [],
+    passRecapLines,
+    queueNextLine
   };
 }
 
@@ -939,45 +957,44 @@ async function generateSimpleReportDocx(data) {
     const labelWidth = 2600;
     const valueWidth = 7200;
 
-    const playingRow = new docx.TableRow({
+    const mkRow = (label, value, opts) => new docx.TableRow({
       children: [
         new docx.TableCell({
           width: { size: labelWidth, type: docx.WidthType.DXA },
-          shading: { type: docx.ShadingType.CLEAR, fill: 'EDEAE0' },
+          shading: { type: docx.ShadingType.CLEAR, fill: opts.labelFill },
           margins: { top: 160, bottom: 160, left: 160, right: 160 },
-          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: 'PLAYING', bold: true, size: 26, color: '111111' })] })],
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: label, bold: true, size: 26, color: '111111' })] })],
         }),
         new docx.TableCell({
           width: { size: valueWidth, type: docx.WidthType.DXA },
+          shading: opts.valueFill ? { type: docx.ShadingType.CLEAR, fill: opts.valueFill } : undefined,
           margins: { top: 160, bottom: 160, left: 160, right: 160 },
-          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: d.playingLine, bold: true, size: 30 })] })],
+          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: value, bold: true, size: 30, color: opts.valueColor })] })],
         }),
       ],
     });
 
-    const payingRow = new docx.TableRow({
-      children: [
-        new docx.TableCell({
-          width: { size: labelWidth, type: docx.WidthType.DXA },
-          shading: { type: docx.ShadingType.CLEAR, fill: 'C9A227' },
-          margins: { top: 160, bottom: 160, left: 160, right: 160 },
-          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: '$ PAYING', bold: true, size: 26, color: '111111' })] })],
-        }),
-        new docx.TableCell({
-          width: { size: valueWidth, type: docx.WidthType.DXA },
-          shading: { type: docx.ShadingType.CLEAR, fill: 'FBF6E3' },
-          margins: { top: 160, bottom: 160, left: 160, right: 160 },
-          children: [new docx.Paragraph({ children: [new docx.TextRun({ text: d.payingLine, bold: true, size: 30, color: '8A5A00' })] })],
-        }),
-      ],
-    });
+    const playingRow = mkRow('PLAYING', d.playingLine, { labelFill: 'EDEAE0' });
+    const payingRow = mkRow('$ PAYING', d.payingLine, { labelFill: 'C9A227', valueFill: 'FBF6E3', valueColor: '8A5A00' });
+    const bookRow = mkRow('BOOK', d.bookLine, { labelFill: 'E8DCB0', valueFill: 'FBF6E3', valueColor: '8A5A00' });
 
     children.push(new docx.Table({
       width: { size: labelWidth + valueWidth, type: docx.WidthType.DXA },
       columnWidths: [labelWidth, valueWidth],
-      rows: [playingRow, payingRow],
+      rows: [playingRow, payingRow, bookRow],
     }));
   });
+
+  if (data.notesParagraphs.length) {
+    children.push(docxSectionHeader('Notes'));
+    data.notesParagraphs.forEach(p => children.push(docxBodyPara(p, 120)));
+  }
+
+  if (data.passRecapLines.length || data.queueNextLine) {
+    children.push(docxSectionHeader('Court Pass Rotation'));
+    data.passRecapLines.forEach(l => children.push(docxBodyPara(l, 40)));
+    if (data.queueNextLine) children.push(docxBodyPara(data.queueNextLine, 40));
+  }
 
   const doc = new docx.Document({
     sections: [{
@@ -997,7 +1014,9 @@ async function exportCurrentSimpleReport() {
   clearError();
   try {
     const dayEntries = state.activeDays.map(d => Object.assign({ day: d }, preview.results[d]));
-    const data = buildSimpleReportData(dayEntries, state.weekDateRange);
+    const notes = buildNotesParagraphs(preview.results);
+    const nextUp = preview.finalQueueOrder[0];
+    const data = buildSimpleReportData(dayEntries, state.weekDateRange, notes, nextUp);
     const blob = await generateSimpleReportDocx(data);
     downloadBlob(blob, 'Simple_Schedule_Week' + state.weekNumber + '.docx');
   } catch (e) {
@@ -1013,7 +1032,13 @@ async function exportHistorySimpleReport(weekIndex) {
   }
   clearError();
   try {
-    const data = buildSimpleReportData(w.days, w.weekDateRange);
+    const notes = (w.docSnapshot && w.docSnapshot.notesParagraphs) || [];
+    let nextUp = '';
+    if (w.docSnapshot && w.docSnapshot.queueNextLine) {
+      const m = w.docSnapshot.queueNextLine.match(/with (.+?) at the front/) || w.docSnapshot.queueNextLine.match(/with (.+?) for the following week/);
+      if (m) nextUp = m[1];
+    }
+    const data = buildSimpleReportData(w.days, w.weekDateRange, notes, nextUp);
     const blob = await generateSimpleReportDocx(data);
     downloadBlob(blob, 'Simple_Schedule_Week' + weekIndex + '.docx');
   } catch (e) {
